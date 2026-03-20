@@ -4,7 +4,7 @@ const path = require('path');
 const P2PTransferManager = require('./transfer-manager');
 
 // Configuration
-const SIGNALING_SERVER = 'http://localhost:3000'; // Change this to your server URL
+const SIGNALING_SERVER = 'https://orelay-production.up.railway.app'; // Change this to your server URL
 
 let currentMode = null;
 let selectedItemPath = null;
