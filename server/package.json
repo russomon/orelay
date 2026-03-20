@@ -1,0 +1,20 @@
+{
+  "name": "orelay-signaling-server",
+  "version": "1.0.0",
+  "description": "Signaling server for P2P Transfer app",
+  "main": "signaling-server.js",
+  "scripts": {
+    "start": "node signaling-server.js",
+    "dev": "nodemon signaling-server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.5.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": ["signaling", "webrtc", "p2p"],
+  "author": "Your Name",
+  "license": "MIT"
+}

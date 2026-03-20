@@ -1,0 +1,66 @@
+{
+  "name": "orelay",
+  "version": "1.0.0",
+  "description": "Peer-to-peer file transfer application with token-based sharing",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder --mac --win --linux",
+    "server": "node server/signaling-server.js"
+  },
+  "build": {
+    "appId": "com.orbitolive.orelay",
+    "productName": "Orelay",
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": ["dmg", "zip"],
+      "icon": "assets/icon.icns",
+      "fileAssociations": [
+        {
+          "ext": "ort",
+          "name": "P2P Transfer Token",
+          "role": "Viewer"
+        }
+      ]
+    },
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "assets/icon.ico",
+      "fileAssociations": [
+        {
+          "ext": "ort",
+          "name": "P2P Transfer Token",
+          "description": "P2P Transfer Token File"
+        }
+      ]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Network",
+      "fileAssociations": [
+        {
+          "ext": "ort",
+          "mimeType": "application/x-ort"
+        }
+      ]
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "node_modules/**/*"
+    ]
+  },
+  "dependencies": {
+    "socket.io-client": "^4.5.4"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "keywords": ["p2p", "file-transfer", "webrtc", "electron"],
+  "author": "Your Name",
+  "license": "MIT"
+}
