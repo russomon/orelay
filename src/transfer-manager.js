@@ -528,13 +528,15 @@ class P2PTransferManager {
   // Original single file download
   async downloadSingleFile(token, savePath, onProgress) {
     const totalChunks = Math.ceil(token.fileSize / CHUNK_SIZE);
-    
+    const fd = fs.openSync(savePath, 'w');
+
     this.transfers.set(token.senderId, {
       type: 'file',
       token,
       savePath,
       totalChunks,
-      receivedChunks: new Map(),
+      receivedCount: 0,
+      fd,
       onProgress
     });
 
@@ -545,7 +547,7 @@ class P2PTransferManager {
     });
 
     this.onChannelOpen = () => {
-      this.requestNextChunk(token.senderId, 0);
+      this.requestChunk(0, 0);
     };
   }
 
@@ -568,7 +570,7 @@ class P2PTransferManager {
 
     this.onChannelOpen = () => {
       console.log('Receiver: Starting download from file 0');
-      this.requestNextChunk(token.senderId, 0, 0);
+      this.requestChunk(0, 0);
     };
   }
 
@@ -588,19 +590,20 @@ class P2PTransferManager {
     }
 
     if (transfer.type === 'file') {
-      // Single file handling
-      transfer.receivedChunks.set(chunkIndex, chunkBuffer);
+      // Single file handling — write directly to disk at the correct offset
+      fs.writeSync(transfer.fd, chunkBuffer, 0, chunkBuffer.length, chunkIndex * CHUNK_SIZE);
+      transfer.receivedCount++;
 
       if (transfer.onProgress) {
         transfer.onProgress({
-          received: transfer.receivedChunks.size,
+          received: transfer.receivedCount,
           total: totalChunks,
-          percentage: Math.round((transfer.receivedChunks.size / totalChunks) * 100)
+          percentage: Math.round((transfer.receivedCount / totalChunks) * 100)
         });
       }
 
-      if (transfer.receivedChunks.size < totalChunks) {
-        this.requestNextChunk(this.currentPeer, 0);
+      if (transfer.receivedCount < totalChunks) {
+        this.requestChunk(0, chunkIndex + 1);
       } else {
         this.finalizeDownload(this.currentPeer);
       }
@@ -637,12 +640,12 @@ class P2PTransferManager {
         if (fileIndex < transfer.token.files.length - 1) {
           transfer.currentFileIndex = fileIndex + 1;
           console.log(`Receiver: Starting file ${fileIndex + 2}/${transfer.token.files.length}`);
-          this.requestNextChunk(this.currentPeer, fileIndex + 1, 0);
+          this.requestChunk(fileIndex + 1, 0);
         } else {
           this.finalizeFolderDownload(this.currentPeer);
         }
       } else {
-        this.requestNextChunk(this.currentPeer, fileIndex);
+        this.requestChunk(fileIndex, chunkIndex + 1);
       }
     }
   }
@@ -676,37 +679,6 @@ class P2PTransferManager {
     }
   }
 
-  requestNextChunk(senderId, fileIndex, startChunk) {
-    const transfer = this.transfers.get(senderId);
-    if (!transfer) return;
-
-    if (transfer.type === 'file') {
-      // Find next missing chunk
-      for (let i = 0; i < transfer.totalChunks; i++) {
-        if (!transfer.receivedChunks.has(i)) {
-          this.requestChunk(0, i);
-          return;
-        }
-      }
-    } else {
-      // Find next missing chunk for current file
-      const file = transfer.token.files[fileIndex];
-      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-      
-      if (!transfer.receivedFiles[fileIndex]) {
-        transfer.receivedFiles[fileIndex] = new Map();
-      }
-      
-      const start = startChunk !== undefined ? startChunk : 0;
-      for (let i = start; i < totalChunks; i++) {
-        if (!transfer.receivedFiles[fileIndex].has(i)) {
-          this.requestChunk(fileIndex, i);
-          return;
-        }
-      }
-    }
-  }
-
   requestChunk(fileIndex, chunkIndex) {
     this.dataChannel.send(JSON.stringify({
       type: 'request-chunk',
@@ -719,15 +691,7 @@ class P2PTransferManager {
     const transfer = this.transfers.get(senderId);
     if (!transfer) return;
 
-    // Write chunks to file
-    const fd = fs.openSync(transfer.savePath, 'w');
-    for (let i = 0; i < transfer.totalChunks; i++) {
-      const chunk = transfer.receivedChunks.get(i);
-      if (chunk) {
-        fs.writeSync(fd, chunk);
-      }
-    }
-    fs.closeSync(fd);
+    fs.closeSync(transfer.fd);
 
     // Verify final file hash
     const fileHash = await this.generateFileHash(transfer.savePath);
