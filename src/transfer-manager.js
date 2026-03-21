@@ -591,7 +591,15 @@ class P2PTransferManager {
 
     if (transfer.type === 'file') {
       // Single file handling — write directly to disk at the correct offset
-      fs.writeSync(transfer.fd, chunkBuffer, 0, chunkBuffer.length, chunkIndex * CHUNK_SIZE);
+      try {
+        fs.writeSync(transfer.fd, chunkBuffer, 0, chunkBuffer.length, chunkIndex * CHUNK_SIZE);
+      } catch (writeError) {
+        console.error('Disk write failed at chunk', chunkIndex, ':', writeError.message);
+        fs.closeSync(transfer.fd);
+        if (transfer.onProgress) transfer.onProgress({ error: 'Disk write failed: ' + writeError.message });
+        this.cleanup();
+        return;
+      }
       transfer.receivedCount++;
 
       if (transfer.onProgress) {
