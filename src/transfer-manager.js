@@ -4,6 +4,8 @@ const path = require('path');
 const io = require('socket.io-client');
 
 const CHUNK_SIZE = 64 * 1024; // 64KB chunks (safe with base64 encoding)
+const WINDOW_SIZE = 64;       // chunks in flight at once (pipeline depth)
+const SEND_BUFFER_HIGH = 4 * 1024 * 1024; // pause sending above 4MB buffered
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' }
@@ -18,6 +20,7 @@ class P2PTransferManager {
     this.peerId = this.generatePeerId();
     this.transfers = new Map();
     this.currentFileIndex = 0;
+    this.sendQueue = [];
   }
 
   generatePeerId() {
@@ -117,6 +120,10 @@ class P2PTransferManager {
     this.dataChannel.binaryType = 'arraybuffer';
     this.dataChannel.bufferedAmountLowThreshold = 256 * 1024; // 256KB threshold
     
+    this.dataChannel.onbufferedamountlow = () => {
+      this.processSendQueue();
+    };
+
     this.dataChannel.onopen = () => {
       console.log('Data channel opened');
       if (this.onChannelOpen) this.onChannelOpen();
@@ -447,14 +454,15 @@ class P2PTransferManager {
       const chunk = buffer.slice(0, bytesRead);
       const chunkHash = crypto.createHash('sha256').update(chunk).digest('hex');
 
-      this.dataChannel.send(JSON.stringify({
+      const message = JSON.stringify({
         type: 'chunk-data',
         fileIndex: fileIndex || 0,
         chunkIndex,
         totalChunks,
         data: chunk.toString('base64'),
         hash: chunkHash
-      }));
+      });
+      this.sendOrQueue(message);
 
       // Update progress
       if (transfer.type === 'file') {
@@ -539,6 +547,7 @@ class P2PTransferManager {
       savePath,
       totalChunks,
       receivedCount: 0,
+      nextChunkToRequest: 0,
       fd,
       onProgress
     });
@@ -550,7 +559,11 @@ class P2PTransferManager {
     });
 
     this.onChannelOpen = () => {
-      this.requestChunk(0, 0);
+      const transfer = this.transfers.get(token.senderId);
+      const window = Math.min(WINDOW_SIZE, transfer.totalChunks);
+      for (let i = 0; i < window; i++) {
+        this.requestChunk(0, transfer.nextChunkToRequest++);
+      }
     };
   }
 
@@ -614,7 +627,10 @@ class P2PTransferManager {
       }
 
       if (transfer.receivedCount < totalChunks) {
-        this.requestChunk(0, chunkIndex + 1);
+        // Keep the pipeline full — request the next unsent chunk
+        if (transfer.nextChunkToRequest < totalChunks) {
+          this.requestChunk(0, transfer.nextChunkToRequest++);
+        }
       } else {
         this.finalizeDownload(this.currentPeer);
       }
@@ -687,6 +703,20 @@ class P2PTransferManager {
       console.log('File written:', fullPath);
     } catch (error) {
       console.error('Error writing file:', fullPath, error);
+    }
+  }
+
+  sendOrQueue(message) {
+    if (this.dataChannel.bufferedAmount > SEND_BUFFER_HIGH) {
+      this.sendQueue.push(message);
+    } else {
+      this.dataChannel.send(message);
+    }
+  }
+
+  processSendQueue() {
+    while (this.sendQueue.length > 0 && this.dataChannel.bufferedAmount <= SEND_BUFFER_HIGH) {
+      this.dataChannel.send(this.sendQueue.shift());
     }
   }
 
