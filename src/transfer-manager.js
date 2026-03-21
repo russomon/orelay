@@ -91,13 +91,16 @@ class P2PTransferManager {
 
     this.peerConnection.onconnectionstatechange = () => {
       console.log('Connection state:', this.peerConnection.connectionState);
-      if (this.peerConnection.connectionState === 'failed') {
+      const state = this.peerConnection.connectionState;
+      if (state === 'failed') {
         console.error('Peer connection failed!');
-      } else if (this.peerConnection.connectionState === 'disconnected') {
+        this.notifyTransferError('Peer connection failed');
+      } else if (state === 'disconnected') {
         console.warn('Peer connection disconnected');
+        this.notifyTransferError('Peer disconnected');
       }
       if (this.onConnectionStateChange) {
-        this.onConnectionStateChange(this.peerConnection.connectionState);
+        this.onConnectionStateChange(state);
       }
     };
 
@@ -120,8 +123,8 @@ class P2PTransferManager {
     };
 
     this.dataChannel.onclose = () => {
-      console.error('Data channel closed! This may cause transfer to hang.');
-      if (this.onChannelClose) this.onChannelClose();
+      console.error('Data channel closed!');
+      this.notifyTransferError('Connection to peer was lost');
     };
 
     this.dataChannel.onerror = (error) => {
@@ -772,6 +775,14 @@ class P2PTransferManager {
       }
     }
 
+    this.cleanup();
+  }
+
+  notifyTransferError(message) {
+    const transfer = this.transfers.get(this.currentPeer);
+    if (transfer && transfer.onProgress) {
+      transfer.onProgress({ error: message });
+    }
     this.cleanup();
   }
 
