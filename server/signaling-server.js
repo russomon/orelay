@@ -81,7 +81,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`
 ╔════════════════════════════════════════╗
 ║  P2P Transfer Signaling Server         ║
