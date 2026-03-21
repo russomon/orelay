@@ -11,6 +11,13 @@ let selectedItemPath = null;
 let selectedIsFolder = false;
 let tokenData = null;
 let transferManager = null;
+let transferStartTime = null;
+
+// Right-click context menu
+window.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  ipcRenderer.send('show-context-menu');
+});
 
 // Mode Selection
 function selectMode(mode) {
@@ -90,22 +97,48 @@ async function countFilesInFolder(folderPath) {
 
 async function generateToken() {
   try {
-    showSendStatus('Preparing transfer...', 'info');
-    
-    if (selectedIsFolder) {
-      showSendStatus('Scanning folder and generating hashes...', 'info');
+    document.getElementById('sendFileSelected').classList.add('hidden');
+    document.getElementById('sendTokenGenerating').classList.remove('hidden');
+
+    const fill = document.getElementById('tokenProgressFill');
+    const text = document.getElementById('tokenProgressText');
+
+    if (!selectedIsFolder) {
+      // Indeterminate until first progress event arrives
+      fill.classList.add('indeterminate');
+      text.textContent = 'Hashing file...';
+    } else {
+      text.textContent = 'Scanning folder...';
     }
-    
+
     transferManager = new P2PTransferManager(SIGNALING_SERVER);
-    const token = await transferManager.createTransferToken(selectedItemPath);
-    
+    const token = await transferManager.createTransferToken(selectedItemPath, (progress) => {
+      if (progress.phase === 'hashing') {
+        if (progress.bytes !== undefined) {
+          // Single file — real byte progress
+          fill.classList.remove('indeterminate');
+          const pct = Math.round(progress.bytes / progress.total * 100);
+          fill.style.width = pct + '%';
+          text.textContent = `Hashing file... ${pct}%`;
+        } else if (progress.completed !== undefined) {
+          // Folder — per-file progress
+          const pct = Math.round(progress.completed / progress.total * 100);
+          fill.style.width = pct + '%';
+          const etaStr = progress.eta != null ? ` — ${Math.ceil(progress.eta)}s remaining` : '';
+          text.textContent = `Hashing file ${progress.completed} of ${progress.total}${etaStr}`;
+        }
+      }
+    });
+
+    document.getElementById('sendTokenGenerating').classList.add('hidden');
     document.getElementById('tokenDisplay').textContent = token;
     document.getElementById('sendTokenGenerated').classList.remove('hidden');
-    
-    // Start seeding
+
     await startSeeding();
-    
+
   } catch (error) {
+    document.getElementById('sendTokenGenerating').classList.add('hidden');
+    document.getElementById('sendFileSelected').classList.remove('hidden');
     showSendStatus('Error generating token: ' + error.message, 'error');
   }
 }
@@ -129,12 +162,10 @@ async function startSeeding() {
     
     transferManager.onConnectionStateChange = (state) => {
       if (state === 'connected') {
-        if (selectedIsFolder) {
-          showSendStatus('Recipient connected! Transferring folder...', 'info');
-        } else {
-          showSendStatus('Recipient connected! Transferring file...', 'info');
-        }
+        transferStartTime = Date.now();
+        showSendStatus(selectedIsFolder ? 'Recipient connected! Transferring folder...' : 'Recipient connected! Transferring file...', 'info');
         document.getElementById('sendProgress').classList.remove('hidden');
+        document.getElementById('sendTransferStats').style.display = 'block';
       } else if (state === 'disconnected') {
         showSendStatus('Recipient disconnected. Waiting for reconnection...', 'warning');
       }
@@ -148,7 +179,13 @@ async function startSeeding() {
 function copyToken() {
   const token = document.getElementById('tokenDisplay').textContent;
   navigator.clipboard.writeText(token);
-  showSendStatus('Token copied to clipboard!', 'success');
+  const btn = document.getElementById('copyTokenBtn');
+  btn.textContent = 'Copied!';
+  btn.classList.add('btn-copied');
+  setTimeout(() => {
+    btn.textContent = 'Copy Token';
+    btn.classList.remove('btn-copied');
+  }, 2000);
 }
 
 async function downloadToken() {
@@ -185,11 +222,24 @@ function updateSendProgress(progress) {
   } else {
     // Single file progress
     const percentage = progress.percentage || 0;
+    const bytesSent = (progress.sent || 0) * 64 * 1024;
+    const totalBytes = (progress.total || 0) * 64 * 1024;
     document.getElementById('sendProgressFill').style.width = percentage + '%';
-    document.getElementById('sendProgressText').textContent = 
-      `${percentage}% (${progress.sent || 0}/${progress.total || 0} chunks)`;
+    document.getElementById('sendProgressText').textContent = `${percentage}%`;
     document.getElementById('sendCurrentFile').style.display = 'none';
-    
+
+    if (transferStartTime) {
+      const elapsed = (Date.now() - transferStartTime) / 1000;
+      const speed = elapsed > 0 ? bytesSent / elapsed : 0;
+      const eta = speed > 0 ? (totalBytes - bytesSent) / speed : 0;
+      const statsEl = document.getElementById('sendTransferStats');
+      if (percentage < 100) {
+        statsEl.textContent = `${formatFileSize(bytesSent)} of ${formatFileSize(totalBytes)} at ${formatFileSize(Math.round(speed))}/s — ${formatTime(eta)} remaining`;
+      } else {
+        statsEl.textContent = `${formatFileSize(totalBytes)} transferred in ${formatTime(elapsed)}`;
+      }
+    }
+
     if (percentage === 100) {
       showSendStatus('Transfer complete! File sent successfully.', 'success');
       setTimeout(() => {
@@ -207,14 +257,17 @@ function showSendStatus(message, type) {
 }
 
 function resetSendUI() {
+  transferStartTime = null;
   document.getElementById('sendFileSelection').classList.remove('hidden');
   document.getElementById('sendFileSelected').classList.add('hidden');
+  document.getElementById('sendTokenGenerating').classList.add('hidden');
   document.getElementById('sendTokenGenerated').classList.add('hidden');
   document.getElementById('sendSeeding').classList.add('hidden');
   document.getElementById('sendProgress').classList.add('hidden');
   document.getElementById('sendStatus').classList.add('hidden');
   document.getElementById('sendProgressFill').style.width = '0%';
   document.getElementById('sendCurrentFile').style.display = 'none';
+  document.getElementById('sendTransferStats').style.display = 'none';
 }
 
 // RECEIVE MODE FUNCTIONS
@@ -363,6 +416,12 @@ function resetReceiveUI() {
 }
 
 // Utility
+function formatTime(seconds) {
+  if (seconds < 60) return `${Math.ceil(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.ceil(seconds % 60)}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
 function formatFileSize(bytes) {
   if (bytes === 0) return '0 Bytes';
   const k = 1024;

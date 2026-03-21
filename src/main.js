@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -207,4 +207,14 @@ ipcMain.on('seeding-started', (event, peerId) => {
 
 ipcMain.on('seeding-stopped', (event, peerId) => {
   seedingWindows.delete(peerId);
+});
+
+ipcMain.on('show-context-menu', (event) => {
+  const menu = Menu.buildFromTemplate([
+    { label: 'Copy', role: 'copy' },
+    { label: 'Paste', role: 'paste' },
+    { type: 'separator' },
+    { label: 'Select All', role: 'selectAll' }
+  ]);
+  menu.popup({ window: BrowserWindow.fromWebContents(event.sender) });
 });

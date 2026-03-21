@@ -143,12 +143,18 @@ class P2PTransferManager {
     };
   }
 
-  async generateFileHash(filePath) {
+  async generateFileHash(filePath, onProgress) {
     return new Promise((resolve, reject) => {
       const hash = crypto.createHash('sha256');
+      const totalBytes = fs.statSync(filePath).size;
+      let bytesRead = 0;
       const stream = fs.createReadStream(filePath);
-      
-      stream.on('data', (chunk) => hash.update(chunk));
+
+      stream.on('data', (chunk) => {
+        hash.update(chunk);
+        bytesRead += chunk.length;
+        if (onProgress) onProgress(bytesRead, totalBytes);
+      });
       stream.on('end', () => resolve(hash.digest('hex')));
       stream.on('error', reject);
     });
@@ -220,20 +226,22 @@ class P2PTransferManager {
   }
 
   // Create token for either file or folder
-  async createTransferToken(itemPath) {
+  async createTransferToken(itemPath, onProgress) {
     const isDir = this.isFolder(itemPath);
-    
+
     if (isDir) {
-      return await this.createFolderToken(itemPath);
+      return await this.createFolderToken(itemPath, onProgress);
     } else {
-      return await this.createFileToken(itemPath);
+      return await this.createFileToken(itemPath, onProgress);
     }
   }
 
   // Original single file token
-  async createFileToken(filePath) {
+  async createFileToken(filePath, onProgress) {
     const stats = fs.statSync(filePath);
-    const fileHash = await this.generateFileHash(filePath);
+    const fileHash = await this.generateFileHash(filePath, onProgress
+      ? (bytes, total) => onProgress({ phase: 'hashing', bytes, total })
+      : null);
     
     const token = {
       version: '1.0',
@@ -251,25 +259,30 @@ class P2PTransferManager {
   }
 
   // Multi-file folder token
-  async createFolderToken(folderPath) {
+  async createFolderToken(folderPath, onProgress) {
     console.log('Scanning folder:', folderPath);
     const files = await this.scanFolder(folderPath);
-    
+
     if (files.length === 0) {
       throw new Error('No readable files found in folder');
     }
-    
+
     console.log('Generating hashes for', files.length, 'files...');
-    
+    let completed = 0;
+    const startTime = Date.now();
+
     // Hash all files in parallel for speed
     const filePromises = files.map(async (file) => {
       try {
         const hash = await this.generateFileHash(file.fullPath);
-        return {
-          path: file.relativePath,
-          size: file.size,
-          hash: hash
-        };
+        completed++;
+        if (onProgress) {
+          const elapsed = (Date.now() - startTime) / 1000;
+          const rate = elapsed > 0 ? completed / elapsed : 0;
+          const eta = rate > 0 ? (files.length - completed) / rate : null;
+          onProgress({ phase: 'hashing', completed, total: files.length, eta });
+        }
+        return { path: file.relativePath, size: file.size, hash };
       } catch (error) {
         console.error('Error hashing file:', file.fullPath, error);
         return null;

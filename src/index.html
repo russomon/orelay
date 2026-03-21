@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>P2P Transfer</title>
+  <title>Orelay P2P Transfer</title>
   <style>
     * {
       margin: 0;
@@ -348,13 +348,29 @@
       background: #fed7d7;
       color: #742a2a;
     }
+
+    .progress-fill.indeterminate {
+      width: 40% !important;
+      animation: indeterminate 1.4s ease-in-out infinite;
+    }
+
+    @keyframes indeterminate {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+
+    .btn-copied {
+      background: #48bb78 !important;
+      color: white !important;
+      border-color: #48bb78 !important;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <!-- Mode Selection -->
     <div id="modeSelection" class="mode-selection-screen">
-      <h1>P2P File Transfer</h1>
+      <h1>Orelay P2P Transfer</h1>
       <p class="subtitle">Direct peer-to-peer file & folder sharing without cloud storage</p>
       
       <div class="mode-selection">
@@ -403,11 +419,19 @@
         <button class="btn btn-primary" onclick="generateToken()">Generate Transfer Token</button>
       </div>
 
+      <div id="sendTokenGenerating" class="section hidden">
+        <div class="section-title">Creating Share Token</div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="tokenProgressFill" style="width: 0%"></div>
+        </div>
+        <div class="progress-text" id="tokenProgressText" style="margin-top: 8px;">Preparing...</div>
+      </div>
+
       <div id="sendTokenGenerated" class="section hidden">
         <div class="section-title">Step 2: Share Token</div>
         <div class="token-display" id="tokenDisplay"></div>
         <div class="btn-group">
-          <button class="btn btn-outline" onclick="copyToken()">Copy Token</button>
+          <button class="btn btn-outline" id="copyTokenBtn" onclick="copyToken()">Copy Token</button>
           <button class="btn btn-secondary" onclick="downloadToken()">Download .ort File</button>
         </div>
       </div>
@@ -433,6 +457,7 @@
           </div>
           <div class="progress-text" id="sendProgressText">0%</div>
           <div class="current-file" id="sendCurrentFile"></div>
+          <div class="current-file" id="sendTransferStats" style="display:none"></div>
         </div>
       </div>
     </div>
