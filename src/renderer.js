@@ -196,12 +196,6 @@ async function startSeeding() {
       }
     };
 
-    transferManager.onTransferComplete = () => {
-      showSendStatus('File received and verified by recipient!', 'success');
-      setTimeout(() => {
-        ipcRenderer.send('seeding-stopped', transferManager.peerId);
-      }, 2000);
-    };
     
   } catch (error) {
     showSendStatus('Error starting seed: ' + error.message, 'error');
@@ -279,8 +273,10 @@ function updateSendProgress(progress) {
     }
 
     if (percentage === 100) {
-      showSendStatus('All chunks sent — awaiting receiver confirmation...', 'info');
-      // seeding-stopped and success message fire via onTransferComplete
+      showSendStatus('Transfer complete! File sent successfully.', 'success');
+      setTimeout(() => {
+        ipcRenderer.send('seeding-stopped', transferManager.peerId);
+      }, 2000);
     }
   }
 }

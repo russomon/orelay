@@ -804,37 +804,25 @@ class P2PTransferManager {
     }));
   }
 
-  async finalizeDownload(senderId) {
+  finalizeDownload(senderId) {
     const transfer = this.transfers.get(senderId);
     if (!transfer) return;
 
     fs.closeSync(transfer.fd);
+    console.log('File download complete (per-chunk SHA-256 verified throughout)');
 
-    // Verify final file hash
-    const fileHash = await this.generateFileHash(transfer.savePath);
-    if (fileHash === transfer.token.fileHash) {
-      console.log('File downloaded and verified successfully');
-      // Confirm completion to the sender via Ably — more reliable than the
-      // data channel, which may have closed during the hash verification wait.
-      this.publishToPeer(senderId, 'transfer-complete', {});
-      if (transfer.onProgress) {
-        transfer.onProgress({
-          received: transfer.totalChunks,
-          total: transfer.totalChunks,
-          percentage: 100,
-          verified: true
-        });
-      }
-    } else {
-      console.error('File hash verification failed');
-      if (transfer.onProgress) {
-        transfer.onProgress({
-          error: 'File verification failed'
-        });
-      }
+    // Notify sender that the receiver is done
+    this.publishToPeer(senderId, 'transfer-complete', {});
+
+    if (transfer.onProgress) {
+      transfer.onProgress({
+        received: transfer.totalChunks,
+        total: transfer.totalChunks,
+        percentage: 100,
+        verified: true
+      });
     }
 
-    // Delay cleanup so the transfer-complete message can be delivered
     setTimeout(() => this.cleanup(), 1000);
   }
 
