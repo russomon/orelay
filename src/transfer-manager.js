@@ -817,13 +817,20 @@ class P2PTransferManager {
     // Notify sender that the receiver is done
     this.publishToPeer(senderId, 'transfer-complete', {});
 
+    // Wrap in its own try/catch — this call is nested inside handleDataChannelMessage's
+    // try/catch, so any throw here would be silently swallowed, preventing the success UI.
     if (transfer.onProgress) {
-      transfer.onProgress({
-        received: transfer.totalChunks,
-        total: transfer.totalChunks,
-        percentage: 100,
-        verified: true
-      });
+      try {
+        transfer.onProgress({
+          received: transfer.totalChunks,
+          total: transfer.totalChunks,
+          percentage: 100,
+          verified: true,
+          complete: true
+        });
+      } catch (e) {
+        console.error('[finalizeDownload] onProgress threw — UI may not update:', e);
+      }
     }
 
     setTimeout(() => this.cleanup(), 1000);

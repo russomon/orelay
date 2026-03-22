@@ -374,20 +374,15 @@ async function startDownload() {
       } else if (progress.resuming) {
         updateReceiveProgress(progress);
         showReceiveStatus(`Resuming from ${progress.percentage}% — ${formatFileSize(progress.received * 64 * 1024)} already downloaded`, 'info');
-      } else if (progress.complete) {
+      } else if (progress.complete || (progress.percentage === 100 && progress.verified)) {
+        // Set these flags first, before any DOM work that could throw
         receiveComplete = true;
-        transferManager.onConnectionStateChange = null;
-        updateReceiveProgress({ percentage: 100, verified: true });
+        if (transferManager) transferManager.onConnectionStateChange = null;
+        try { updateReceiveProgress({ percentage: 100, received: progress.received, total: progress.total }); } catch (e) { console.warn('updateReceiveProgress error:', e); }
         showReceiveStatus(`Transfer complete. File saved to "${savePath}"`, 'success');
         showConnectionStatus('Transfer complete', 'connected');
       } else {
         updateReceiveProgress(progress);
-        if (progress.percentage === 100 && progress.verified) {
-          receiveComplete = true;
-          transferManager.onConnectionStateChange = null;
-          showReceiveStatus(`Transfer complete. File saved to "${savePath}"`, 'success');
-          showConnectionStatus('Transfer complete', 'connected');
-        }
       }
     });
 
