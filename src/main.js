@@ -2,6 +2,9 @@ const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+// Suppress Chromium's verbose WebRTC/STUN logging (EAGAIN errors under load are harmless)
+app.commandLine.appendSwitch('log-level', '3');
+
 let mainWindow;
 let seedingWindows = new Map();
 
