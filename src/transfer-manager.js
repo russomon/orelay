@@ -889,10 +889,16 @@ class P2PTransferManager {
   cleanupPeerConnection() {
     this.sendQueue = [];
     if (this.dataChannel) {
+      // Null handlers before closing so an intentional close doesn't fire
+      // notifyTransferError and overwrite the completed/success UI state.
+      this.dataChannel.onclose = null;
+      this.dataChannel.onerror = null;
+      this.dataChannel.onmessage = null;
       this.dataChannel.close();
       this.dataChannel = null;
     }
     if (this.peerConnection) {
+      this.peerConnection.onconnectionstatechange = null;
       this.peerConnection.close();
       this.peerConnection = null;
     }
