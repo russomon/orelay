@@ -1,7 +1,26 @@
 const { ipcRenderer } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
 const P2PTransferManager = require('./transfer-manager');
+
+function loadOrCreatePeerId() {
+  const identityPath = path.join(os.homedir(), '.orelay', 'identity.json');
+  try {
+    if (fs.existsSync(identityPath)) {
+      const data = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
+      if (data.peerId && typeof data.peerId === 'string') return data.peerId;
+    }
+    const peerId = crypto.randomBytes(16).toString('hex');
+    fs.mkdirSync(path.dirname(identityPath), { recursive: true });
+    fs.writeFileSync(identityPath, JSON.stringify({ peerId }));
+    return peerId;
+  } catch (e) {
+    console.warn('Could not persist identity, using temporary peerId:', e.message);
+    return crypto.randomBytes(16).toString('hex');
+  }
+}
 
 // Configuration
 const SIGNALING_SERVER = 'https://orelay-production.up.railway.app'; // Change this to your server URL
@@ -111,7 +130,7 @@ async function generateToken() {
       text.textContent = 'Scanning folder...';
     }
 
-    transferManager = new P2PTransferManager(SIGNALING_SERVER);
+    transferManager = new P2PTransferManager(SIGNALING_SERVER, loadOrCreatePeerId());
     const token = await transferManager.createTransferToken(selectedItemPath, (progress) => {
       if (progress.phase === 'hashing') {
         if (progress.bytes !== undefined) {
@@ -332,6 +351,9 @@ async function startDownload() {
     await transferManager.downloadFile(tokenString, savePath, (progress) => {
       if (progress.error) {
         showReceiveStatus('Error: ' + progress.error, 'error');
+      } else if (progress.resuming) {
+        updateReceiveProgress(progress);
+        showReceiveStatus(`Resuming from ${progress.percentage}% — ${formatFileSize(progress.received * 64 * 1024)} already downloaded`, 'info');
       } else if (progress.complete) {
         updateReceiveProgress({ percentage: 100, verified: true });
       } else {

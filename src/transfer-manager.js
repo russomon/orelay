@@ -12,12 +12,12 @@ const ICE_SERVERS = [
 ];
 
 class P2PTransferManager {
-  constructor(signalingServerUrl) {
+  constructor(signalingServerUrl, peerId) {
     this.signalingServerUrl = signalingServerUrl;
     this.socket = null;
     this.peerConnection = null;
     this.dataChannel = null;
-    this.peerId = this.generatePeerId();
+    this.peerId = peerId || this.generatePeerId();
     this.transfers = new Map();
     this.currentFileIndex = 0;
     this.sendQueue = [];
@@ -552,18 +552,42 @@ class P2PTransferManager {
   // Original single file download
   async downloadSingleFile(token, savePath, onProgress) {
     const totalChunks = Math.ceil(token.fileSize / CHUNK_SIZE);
-    const fd = fs.openSync(savePath, 'w');
+
+    // Detect partial file and resume from where we left off
+    let resumeChunk = 0;
+    let fd;
+    if (fs.existsSync(savePath)) {
+      const existingSize = fs.statSync(savePath).size;
+      const candidate = Math.floor(existingSize / CHUNK_SIZE);
+      if (candidate > 0 && candidate < totalChunks) {
+        resumeChunk = candidate;
+        fd = fs.openSync(savePath, 'r+'); // write without truncating
+      }
+    }
+    if (!fd) {
+      fd = fs.openSync(savePath, 'w');
+    }
 
     this.transfers.set(token.senderId, {
       type: 'file',
       token,
       savePath,
       totalChunks,
-      receivedCount: 0,
-      nextChunkToRequest: 0,
+      receivedCount: resumeChunk,
+      nextChunkToRequest: resumeChunk,
       fd,
       onProgress
     });
+
+    // Notify UI immediately so it can show the resume percentage
+    if (resumeChunk > 0 && onProgress) {
+      onProgress({
+        received: resumeChunk,
+        total: totalChunks,
+        percentage: Math.round(resumeChunk / totalChunks * 100),
+        resuming: true
+      });
+    }
 
     this.currentPeer = token.senderId;
     this.socket.emit('request-peer', {
@@ -573,8 +597,8 @@ class P2PTransferManager {
 
     this.onChannelOpen = () => {
       const transfer = this.transfers.get(token.senderId);
-      const window = Math.min(WINDOW_SIZE, transfer.totalChunks);
-      for (let i = 0; i < window; i++) {
+      const windowEnd = Math.min(transfer.nextChunkToRequest + WINDOW_SIZE, transfer.totalChunks);
+      while (transfer.nextChunkToRequest < windowEnd) {
         this.requestChunk(0, transfer.nextChunkToRequest++);
       }
     };
