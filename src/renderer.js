@@ -366,6 +366,8 @@ async function startDownload() {
     
     const tokenString = document.getElementById('tokenInput').value.trim();
     
+    let receiveComplete = false;
+
     await transferManager.downloadFile(tokenString, savePath, (progress) => {
       if (progress.error) {
         showReceiveStatus('Error: ' + progress.error, 'error');
@@ -373,19 +375,22 @@ async function startDownload() {
         updateReceiveProgress(progress);
         showReceiveStatus(`Resuming from ${progress.percentage}% — ${formatFileSize(progress.received * 64 * 1024)} already downloaded`, 'info');
       } else if (progress.complete) {
+        receiveComplete = true;
         updateReceiveProgress({ percentage: 100, verified: true });
         showReceiveStatus(`Transfer complete. File saved to "${savePath}"`, 'success');
         showConnectionStatus('Transfer complete', 'connected');
       } else {
         updateReceiveProgress(progress);
         if (progress.percentage === 100 && progress.verified) {
+          receiveComplete = true;
           showReceiveStatus(`Transfer complete. File saved to "${savePath}"`, 'success');
           showConnectionStatus('Transfer complete', 'connected');
         }
       }
     });
-    
+
     transferManager.onConnectionStateChange = (state) => {
+      if (receiveComplete) return;
       if (state === 'connected') {
         receiveStartTime = Date.now();
         receiveStartChunks = receiveLastChunks;
