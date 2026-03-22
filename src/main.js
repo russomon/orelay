@@ -151,16 +151,19 @@ ipcMain.handle('save-token-file', async (event, tokenData, fileName) => {
 });
 
 ipcMain.handle('save-received-file', async (event, fileName, totalSize) => {
-  const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: fileName,
-    title: 'Save Received File'
-    // No showOverwriteConfirmation — we handle it ourselves
+  // Use openDirectory instead of showSaveDialog so the OS never shows its
+  // own "Replace?" sheet — we construct the save path and handle conflicts ourselves.
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory', 'createDirectory'],
+    title: `Choose where to save "${fileName}"`
   });
 
-  if (result.canceled || !result.filePath) return null;
+  if (result.canceled || !result.filePaths.length) return null;
 
-  if (fs.existsSync(result.filePath)) {
-    const existingSize = fs.statSync(result.filePath).size;
+  const filePath = path.join(result.filePaths[0], fileName);
+
+  if (fs.existsSync(filePath)) {
+    const existingSize = fs.statSync(filePath).size;
     const fmt = (bytes) => {
       if (bytes >= 1e9) return (bytes / 1e9).toFixed(2) + ' GB';
       if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
@@ -173,14 +176,14 @@ ipcMain.handle('save-received-file', async (event, fileName, totalSize) => {
       defaultId: 0,
       cancelId: 2,
       title: 'Partial Download Found',
-      message: `"${path.basename(result.filePath)}" is partially downloaded`,
+      message: `"${fileName}" is partially downloaded`,
       detail: `${fmt(existingSize)} of ${fmt(totalSize)} (${pct}%) already downloaded.\n\nResume to continue where you left off, or Start Fresh to download again from the beginning.`
     });
     if (choice === 2) return null;
-    return { filePath: result.filePath, resume: choice === 0 };
+    return { filePath, resume: choice === 0 };
   }
 
-  return { filePath: result.filePath, resume: false };
+  return { filePath, resume: false };
 });
 
 // FIXED: Select folder location for received folder
