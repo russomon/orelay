@@ -32,6 +32,7 @@ let selectedIsFolder = false;
 let tokenData = null;
 let transferManager = null;
 let transferStartTime = null;
+let sendStartChunks = -1;   // chunks already sent before this session (set on first progress update)
 let receiveStartTime = null;
 let receiveStartChunks = 0;
 let receiveLastChunks = 0;
@@ -186,6 +187,7 @@ async function startSeeding() {
     transferManager.onConnectionStateChange = (state) => {
       if (state === 'connected') {
         transferStartTime = Date.now();
+        sendStartChunks = -1; // will be captured on the first progress update
         showSendStatus(selectedIsFolder ? 'Recipient connected! Transferring folder...' : 'Recipient connected! Transferring file...', 'info');
         document.getElementById('sendProgress').classList.remove('hidden');
         document.getElementById('sendTransferStats').style.display = 'block';
@@ -252,15 +254,21 @@ function updateSendProgress(progress) {
   } else {
     // Single file progress
     const percentage = progress.percentage || 0;
-    const bytesSent = (progress.sent || 0) * 64 * 1024;
+    const chunksSent = progress.sent || 0;
+    const bytesSent = chunksSent * 64 * 1024;
     const totalBytes = (progress.total || 0) * 64 * 1024;
     document.getElementById('sendProgressFill').style.width = percentage + '%';
     document.getElementById('sendProgressText').textContent = `${percentage}%`;
     document.getElementById('sendCurrentFile').style.display = 'none';
 
+    // Capture the starting chunk offset the first time we get a progress update
+    // (covers both fresh transfers starting at 0 and resumes starting mid-file)
+    if (sendStartChunks === -1) sendStartChunks = chunksSent;
+
     if (transferStartTime) {
       const elapsed = (Date.now() - transferStartTime) / 1000;
-      const speed = elapsed > 0 ? bytesSent / elapsed : 0;
+      const bytesThisSession = (chunksSent - sendStartChunks) * 64 * 1024;
+      const speed = elapsed > 0 ? bytesThisSession / elapsed : 0;
       const eta = speed > 0 ? (totalBytes - bytesSent) / speed : 0;
       const statsEl = document.getElementById('sendTransferStats');
       if (percentage < 100) {
@@ -286,6 +294,7 @@ function showSendStatus(message, type) {
 
 function resetSendUI() {
   transferStartTime = null;
+  sendStartChunks = -1;
   document.getElementById('sendFileSelection').classList.remove('hidden');
   document.getElementById('sendFileSelected').classList.add('hidden');
   document.getElementById('sendTokenGenerating').classList.add('hidden');
