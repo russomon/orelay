@@ -418,6 +418,10 @@ class P2PTransferManager {
         this.sendChunk(message.fileIndex, message.chunkIndex);
       } else if (message.type === 'chunk-data') {
         this.receiveChunk(message);
+      } else if (message.type === 'transfer-start') {
+        this.handleTransferStart(message);
+      } else if (message.type === 'transfer-complete') {
+        if (this.onTransferComplete) this.onTransferComplete();
       }
     } catch (error) {
       console.error('Error handling message:', error);
@@ -597,6 +601,12 @@ class P2PTransferManager {
 
     this.onChannelOpen = () => {
       const transfer = this.transfers.get(token.senderId);
+      // Tell sender where we're resuming from so it can sync its progress display
+      this.dataChannel.send(JSON.stringify({
+        type: 'transfer-start',
+        startChunk: transfer.nextChunkToRequest,
+        totalChunks: transfer.totalChunks
+      }));
       const windowEnd = Math.min(transfer.nextChunkToRequest + WINDOW_SIZE, transfer.totalChunks);
       while (transfer.nextChunkToRequest < windowEnd) {
         this.requestChunk(0, transfer.nextChunkToRequest++);
@@ -757,6 +767,20 @@ class P2PTransferManager {
     }
   }
 
+  handleTransferStart({ startChunk, totalChunks }) {
+    // Sync sender progress to the receiver's starting chunk (resume support)
+    const transfer = this.transfers.get(this.peerId);
+    if (!transfer || startChunk === 0) return;
+    transfer.sentChunks = startChunk;
+    if (transfer.onProgress) {
+      transfer.onProgress({
+        sent: startChunk,
+        total: totalChunks,
+        percentage: Math.round(startChunk / totalChunks * 100)
+      });
+    }
+  }
+
   requestChunk(fileIndex, chunkIndex) {
     this.dataChannel.send(JSON.stringify({
       type: 'request-chunk',
@@ -775,6 +799,10 @@ class P2PTransferManager {
     const fileHash = await this.generateFileHash(transfer.savePath);
     if (fileHash === transfer.token.fileHash) {
       console.log('File downloaded and verified successfully');
+      // Confirm completion to the sender before tearing down
+      if (this.dataChannel && this.dataChannel.readyState === 'open') {
+        this.dataChannel.send(JSON.stringify({ type: 'transfer-complete' }));
+      }
       if (transfer.onProgress) {
         transfer.onProgress({
           received: transfer.totalChunks,
@@ -792,7 +820,8 @@ class P2PTransferManager {
       }
     }
 
-    this.cleanup();
+    // Delay cleanup so the transfer-complete message can be delivered
+    setTimeout(() => this.cleanup(), 1000);
   }
 
   async finalizeFolderDownload(senderId) {
