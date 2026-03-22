@@ -22,8 +22,9 @@ function loadOrCreatePeerId() {
   }
 }
 
-// Configuration
-const ABLY_API_KEY = ''; // Paste your Ably API key here
+// Load .env from project root
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+const ABLY_API_KEY = process.env.ABLY_API_KEY || '';
 
 let currentMode = null;
 let selectedItemPath = null;
