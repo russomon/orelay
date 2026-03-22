@@ -192,7 +192,7 @@ async function startSeeding() {
         document.getElementById('sendProgress').classList.remove('hidden');
         document.getElementById('sendTransferStats').style.display = 'block';
       } else if (state === 'disconnected') {
-        showSendStatus('Recipient disconnected. Waiting for reconnection...', 'warning');
+        showSendStatus('Connection unstable — waiting for recovery...', 'warning');
       }
     };
 
@@ -396,8 +396,7 @@ async function startDownload() {
           showReceiveStatus('Downloading file...', 'info');
         }
       } else if (state === 'disconnected') {
-        showConnectionStatus('Disconnected', 'error');
-        showReceiveStatus('Connection lost. Waiting to reconnect...', 'warning');
+        showConnectionStatus('Reconnecting...', 'connecting');
       }
     };
     

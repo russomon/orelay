@@ -122,10 +122,10 @@ class P2PTransferManager {
       if (state === 'failed') {
         console.error('Peer connection failed!');
         this.notifyTransferError('Peer connection failed');
-      } else if (state === 'disconnected') {
-        console.warn('Peer connection disconnected');
-        this.notifyTransferError('Peer disconnected');
       }
+      // 'disconnected' is transient — WebRTC will recover or escalate to 'failed'.
+      // Tearing down on 'disconnected' would null onmessage, silently dropping
+      // arriving chunks if the connection recovers.
       if (this.onConnectionStateChange) {
         this.onConnectionStateChange(state);
       }
