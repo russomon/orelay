@@ -376,6 +376,7 @@ async function startDownload() {
         showReceiveStatus(`Resuming from ${progress.percentage}% — ${formatFileSize(progress.received * 64 * 1024)} already downloaded`, 'info');
       } else if (progress.complete) {
         receiveComplete = true;
+        transferManager.onConnectionStateChange = null;
         updateReceiveProgress({ percentage: 100, verified: true });
         showReceiveStatus(`Transfer complete. File saved to "${savePath}"`, 'success');
         showConnectionStatus('Transfer complete', 'connected');
@@ -383,6 +384,7 @@ async function startDownload() {
         updateReceiveProgress(progress);
         if (progress.percentage === 100 && progress.verified) {
           receiveComplete = true;
+          transferManager.onConnectionStateChange = null;
           showReceiveStatus(`Transfer complete. File saved to "${savePath}"`, 'success');
           showConnectionStatus('Transfer complete', 'connected');
         }

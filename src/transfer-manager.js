@@ -806,9 +806,12 @@ class P2PTransferManager {
 
   finalizeDownload(senderId) {
     const transfer = this.transfers.get(senderId);
-    if (!transfer) return;
+    if (!transfer || transfer.finalized) return;
+    transfer.finalized = true;
 
-    fs.closeSync(transfer.fd);
+    // Guard against a bad fd — don't let it abort the completion signal
+    try { fs.closeSync(transfer.fd); } catch (e) { console.warn('closeSync:', e.message); }
+
     console.log('File download complete (per-chunk SHA-256 verified throughout)');
 
     // Notify sender that the receiver is done
