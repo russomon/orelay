@@ -374,8 +374,14 @@ async function startDownload() {
         showReceiveStatus(`Resuming from ${progress.percentage}% — ${formatFileSize(progress.received * 64 * 1024)} already downloaded`, 'info');
       } else if (progress.complete) {
         updateReceiveProgress({ percentage: 100, verified: true });
+        showReceiveStatus(`Transfer complete. File saved to "${savePath}"`, 'success');
+        showConnectionStatus('Transfer complete', 'connected');
       } else {
         updateReceiveProgress(progress);
+        if (progress.percentage === 100 && progress.verified) {
+          showReceiveStatus(`Transfer complete. File saved to "${savePath}"`, 'success');
+          showConnectionStatus('Transfer complete', 'connected');
+        }
       }
     });
     
@@ -413,8 +419,6 @@ function updateReceiveProgress(progress) {
     document.getElementById('receiveCurrentFile').style.display = 'block';
     
     if (progress.verified) {
-      showReceiveStatus('Download complete! All files verified successfully.', 'success');
-      showConnectionStatus('Transfer complete', 'connected');
       document.getElementById('receiveCurrentFile').style.display = 'none';
       document.getElementById('receiveProgressFill').style.width = '100%';
       document.getElementById('receiveProgressText').textContent = 'Complete!';
@@ -442,10 +446,6 @@ function updateReceiveProgress(progress) {
       statsEl.style.display = 'none';
     }
 
-    if (percentage === 100 && progress.verified) {
-      showReceiveStatus('Download complete! File verified successfully.', 'success');
-      showConnectionStatus('Transfer complete', 'connected');
-    }
   }
 }
 
