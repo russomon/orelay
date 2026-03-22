@@ -150,16 +150,37 @@ ipcMain.handle('save-token-file', async (event, tokenData, fileName) => {
   return null;
 });
 
-ipcMain.handle('save-received-file', async (event, fileName) => {
+ipcMain.handle('save-received-file', async (event, fileName, totalSize) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: fileName,
     title: 'Save Received File'
+    // No showOverwriteConfirmation — we handle it ourselves
   });
-  
-  if (!result.canceled && result.filePath) {
-    return result.filePath;
+
+  if (result.canceled || !result.filePath) return null;
+
+  if (fs.existsSync(result.filePath)) {
+    const existingSize = fs.statSync(result.filePath).size;
+    const fmt = (bytes) => {
+      if (bytes >= 1e9) return (bytes / 1e9).toFixed(2) + ' GB';
+      if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+      return Math.round(bytes / 1024) + ' KB';
+    };
+    const pct = totalSize > 0 ? Math.round(existingSize / totalSize * 100) : 0;
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'question',
+      buttons: ['Resume Download', 'Start Fresh', 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      title: 'Partial Download Found',
+      message: `"${path.basename(result.filePath)}" is partially downloaded`,
+      detail: `${fmt(existingSize)} of ${fmt(totalSize)} (${pct}%) already downloaded.\n\nResume to continue where you left off, or Start Fresh to download again from the beginning.`
+    });
+    if (choice === 2) return null;
+    return { filePath: result.filePath, resume: choice === 0 };
   }
-  return null;
+
+  return { filePath: result.filePath, resume: false };
 });
 
 // FIXED: Select folder location for received folder

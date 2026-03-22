@@ -31,6 +31,9 @@ let selectedIsFolder = false;
 let tokenData = null;
 let transferManager = null;
 let transferStartTime = null;
+let receiveStartTime = null;
+let receiveStartChunks = 0;
+let receiveLastChunks = 0;
 
 // Right-click context menu
 window.addEventListener('contextmenu', (e) => {
@@ -337,11 +340,15 @@ async function startDownload() {
     
     if (tokenData.type === 'folder') {
       savePath = await ipcRenderer.invoke('select-folder-location', tokenData.folderName);
+      if (!savePath) return;
     } else {
-      savePath = await ipcRenderer.invoke('save-received-file', tokenData.fileName);
+      const result = await ipcRenderer.invoke('save-received-file', tokenData.fileName, tokenData.fileSize);
+      if (!result) return;
+      savePath = result.filePath;
+      if (!result.resume && fs.existsSync(savePath)) {
+        fs.unlinkSync(savePath); // user chose Start Fresh — wipe the partial file
+      }
     }
-    
-    if (!savePath) return;
     
     document.getElementById('receiveProgress').classList.remove('hidden');
     showConnectionStatus('Connecting to sender...', 'connecting');
@@ -363,6 +370,8 @@ async function startDownload() {
     
     transferManager.onConnectionStateChange = (state) => {
       if (state === 'connected') {
+        receiveStartTime = Date.now();
+        receiveStartChunks = receiveLastChunks;
         showConnectionStatus('Connected to sender', 'connected');
         if (tokenData.type === 'folder') {
           showReceiveStatus('Downloading folder...', 'info');
@@ -402,11 +411,26 @@ function updateReceiveProgress(progress) {
   } else {
     // Single file progress
     const percentage = progress.percentage || 0;
+    receiveLastChunks = progress.received || 0;
+    const bytesReceived = receiveLastChunks * 64 * 1024;
+    const totalBytes = (progress.total || 0) * 64 * 1024;
+
     document.getElementById('receiveProgressFill').style.width = percentage + '%';
-    document.getElementById('receiveProgressText').textContent = 
-      `${percentage}% (${progress.received || 0}/${progress.total || 0} chunks)`;
+    document.getElementById('receiveProgressText').textContent = `${percentage}%`;
     document.getElementById('receiveCurrentFile').style.display = 'none';
-    
+
+    const statsEl = document.getElementById('receiveTransferStats');
+    if (receiveStartTime && percentage < 100) {
+      const elapsed = (Date.now() - receiveStartTime) / 1000;
+      const bytesThisSession = (receiveLastChunks - receiveStartChunks) * 64 * 1024;
+      const speed = elapsed > 0 ? bytesThisSession / elapsed : 0;
+      const eta = speed > 0 ? (totalBytes - bytesReceived) / speed : 0;
+      statsEl.style.display = 'block';
+      statsEl.textContent = `${formatFileSize(bytesReceived)} of ${formatFileSize(totalBytes)} at ${formatFileSize(Math.round(speed))}/s — ${formatTime(eta)} remaining`;
+    } else if (percentage === 100) {
+      statsEl.style.display = 'none';
+    }
+
     if (percentage === 100 && progress.verified) {
       showReceiveStatus('Download complete! File verified successfully.', 'success');
       showConnectionStatus('Transfer complete', 'connected');
@@ -428,6 +452,9 @@ function showReceiveStatus(message, type) {
 }
 
 function resetReceiveUI() {
+  receiveStartTime = null;
+  receiveStartChunks = 0;
+  receiveLastChunks = 0;
   document.getElementById('receiveTokenInput').classList.remove('hidden');
   document.getElementById('receiveFileInfo').classList.add('hidden');
   document.getElementById('receiveProgress').classList.add('hidden');
@@ -435,6 +462,7 @@ function resetReceiveUI() {
   document.getElementById('receiveProgressFill').style.width = '0%';
   document.getElementById('tokenInput').value = '';
   document.getElementById('receiveCurrentFile').style.display = 'none';
+  document.getElementById('receiveTransferStats').style.display = 'none';
 }
 
 // Utility
