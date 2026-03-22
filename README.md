@@ -30,24 +30,26 @@ Orelay connects sender and recipient directly using WebRTC — the same technolo
 4. **Recipient** double-clicks the `.ort` file — Orelay opens automatically and begins the direct P2P transfer
 5. The file streams directly from sender's machine to recipient's machine
 
-The signaling server is only used for the initial WebRTC handshake. File data never passes through it.
+Signaling uses [Ably](https://ably.com) for peer discovery — the Ably API key is embedded in the app and peers communicate directly through Ably pub/sub channels. File data never passes through Ably or any server.
 
 ```
-┌─────────────┐         ┌──────────────────┐         ┌─────────────┐
-│   Sender    │         │ Signaling Server │         │  Receiver   │
-│   (Seeder)  │         │   (WebSocket)    │         │ (Leecher)   │
-└─────────────┘         └──────────────────┘         └─────────────┘
-       │                         │                           │
-       │  1. Register as peer    │                           │
-       ├────────────────────────>│                           │
-       │                         │   2. Register as peer     │
-       │                         │<──────────────────────────┤
-       │                         │                           │
-       │  3. WebRTC handshake (SDP/ICE exchanged via signal) │
-       │<═════════════════════════════════════════════════>│
-       │                                                     │
-       │         4. Direct P2P Data Channel (WebRTC)        │
-       │<════════════════ File Chunks + Hashes ════════════>│
+┌─────────────┐         ┌───────────────────────┐         ┌─────────────┐
+│   Sender    │         │   Ably Pub/Sub         │         │  Receiver   │
+│   (Seeder)  │         │  orelay:peer:{id}      │         │ (Leecher)   │
+└─────────────┘         └───────────────────────┘         └─────────────┘
+       │                           │                               │
+       │  1. Subscribe to          │                               │
+       │     orelay:peer:{sender}  │                               │
+       ├──────────────────────────>│                               │
+       │                           │  2. Publish 'request' to      │
+       │                           │     orelay:peer:{sender}      │
+       │                           │<──────────────────────────────┤
+       │                           │                               │
+       │  3. WebRTC handshake (SDP/ICE via Ably 'signal' events)  │
+       │<══════════════════════════════════════════════════════>│
+       │                                                           │
+       │            4. Direct P2P Data Channel (WebRTC)           │
+       │<═══════════════════ File Chunks + Hashes ══════════════>│
 ```
 
 ---
@@ -71,11 +73,8 @@ cd server && npm install && cd ..
 ### Running in Development
 
 ```bash
-# Terminal 1 — Start the signaling server
-cd server
-npm start
-
-# Terminal 2 — Start the Electron app
+# Ably handles signaling — no local server needed.
+# Just start the Electron app:
 npm start
 ```
 
@@ -89,19 +88,28 @@ Packaged apps will appear in the `dist/` folder.
 
 ---
 
-## Deploying the Signaling Server
+## Signaling with Ably
 
-The signaling server is a lightweight Node.js + Socket.IO process. It only brokers the initial WebRTC handshake — no file data ever passes through it.
+Orelay uses [Ably](https://ably.com) for WebRTC signaling — no custom server infrastructure required. Peers communicate directly through Ably pub/sub channels; file data never touches Ably.
 
-**Deploy to Railway (recommended — free tier available):**
+**Setup:**
+
+1. Sign up for a free Ably account at [ably.com](https://ably.com)
+2. Create an API key in your Ably dashboard (Apps → API Keys)
+3. Paste the key into `src/renderer.js` as the `ABLY_API_KEY` constant
+4. Rebuild the app
+
+The `server/` directory contains a minimal health check endpoint (Express + Ably monitoring) that you can optionally deploy to verify your Ably connection. It is not required for transfers to work.
+
+**Optional: deploy the health check endpoint**
+
+Set the `ABLY_API_KEY` environment variable and run:
 
 ```bash
 cd server
-# Push server/ directory to a new Railway project
-# Set start command: node signaling-server.js
+npm install
+npm start
 ```
-
-Once deployed, update the signaling server URL in your Orelay config to point to your hosted instance.
 
 ---
 
@@ -116,9 +124,8 @@ Once deployed, update the signaling server URL in your Orelay config to point to
   "fileSize": 2147483648,
   "fileHash": "sha256:abc123...",
   "senderId": "peer-id-12345",
-  "signalingServer": "https://orelay-production.up.railway.app",
   "timestamp": 1704067200000,
-  "chunkSize": 1048576
+  "chunkSize": 65536
 }
 ```
 

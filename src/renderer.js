@@ -23,7 +23,7 @@ function loadOrCreatePeerId() {
 }
 
 // Configuration
-const SIGNALING_SERVER = 'https://orelay-production.up.railway.app'; // Change this to your server URL
+const ABLY_API_KEY = ''; // Paste your Ably API key here
 
 let currentMode = null;
 let selectedItemPath = null;
@@ -133,7 +133,7 @@ async function generateToken() {
       text.textContent = 'Scanning folder...';
     }
 
-    transferManager = new P2PTransferManager(SIGNALING_SERVER, loadOrCreatePeerId());
+    transferManager = new P2PTransferManager(ABLY_API_KEY, loadOrCreatePeerId());
     const token = await transferManager.createTransferToken(selectedItemPath, (progress) => {
       if (progress.phase === 'hashing') {
         if (progress.bytes !== undefined) {
@@ -315,7 +315,7 @@ async function loadToken() {
       return;
     }
     
-    transferManager = new P2PTransferManager(SIGNALING_SERVER);
+    transferManager = new P2PTransferManager(ABLY_API_KEY);
     tokenData = transferManager.parseToken(tokenString);
     
     if (tokenData.type === 'folder') {

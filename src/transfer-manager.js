@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const io = require('socket.io-client');
+const Ably = require('ably');
 
 const CHUNK_SIZE = 64 * 1024; // 64KB chunks (safe with base64 encoding)
 const WINDOW_SIZE = 64;       // chunks in flight at once (pipeline depth)
@@ -12,9 +12,10 @@ const ICE_SERVERS = [
 ];
 
 class P2PTransferManager {
-  constructor(signalingServerUrl, peerId) {
-    this.signalingServerUrl = signalingServerUrl;
-    this.socket = null;
+  constructor(ablyApiKey, peerId) {
+    this.ablyApiKey = ablyApiKey;
+    this.ably = null;
+    this.myChannel = null;
     this.peerConnection = null;
     this.dataChannel = null;
     this.peerId = peerId || this.generatePeerId();
@@ -29,21 +30,41 @@ class P2PTransferManager {
 
   async connectToSignalingServer() {
     return new Promise((resolve, reject) => {
-      this.socket = io(this.signalingServerUrl);
-      
-      this.socket.on('connect', () => {
-        console.log('Connected to signaling server');
-        this.socket.emit('register', this.peerId);
+      this.ably = new Ably.Realtime({ key: this.ablyApiKey });
+
+      this.ably.connection.once('connected', () => {
+        console.log('Connected to Ably');
+        // Subscribe to our own channel so peers can reach us
+        this.myChannel = this.ably.channels.get(`orelay:peer:${this.peerId}`);
+        this.myChannel.subscribe((message) => {
+          this.handleAblyMessage(message);
+        });
         resolve();
       });
 
-      this.socket.on('connect_error', (error) => {
-        reject(new Error('Failed to connect to signaling server: ' + error.message));
+      this.ably.connection.once('failed', () => {
+        reject(new Error('Failed to connect to Ably'));
       });
+    });
+  }
 
-      this.socket.on('signal', async (data) => {
-        await this.handleSignal(data);
-      });
+  handleAblyMessage(message) {
+    const { name, data } = message;
+    if (name === 'request') {
+      // Receiver wants to connect to this sender
+      if (data.senderId === this.peerId) {
+        this.currentPeer = data.receiverId;
+        this.initiateConnection(data.receiverId);
+      }
+    } else if (name === 'signal') {
+      this.handleSignal(data);
+    }
+  }
+
+  publishToPeer(targetId, eventName, data) {
+    const channel = this.ably.channels.get(`orelay:peer:${targetId}`);
+    channel.publish(eventName, data).catch((err) => {
+      console.error(`Ably publish error (${eventName} -> ${targetId}):`, err.message);
     });
   }
 
@@ -54,16 +75,15 @@ class P2PTransferManager {
 
     if (data.sdp) {
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-      
+
       if (data.sdp.type === 'offer') {
         const answer = await this.peerConnection.createAnswer();
-        
+
         // CRITICAL FIX: Remove Chrome's 30kbps bandwidth limit
         answer.sdp = answer.sdp.replace('b=AS:30', 'b=AS:1638400');
-        
+
         await this.peerConnection.setLocalDescription(answer);
-        this.socket.emit('signal', {
-          to: data.from,
+        this.publishToPeer(data.from, 'signal', {
           from: this.peerId,
           sdp: answer
         });
@@ -78,8 +98,7 @@ class P2PTransferManager {
 
     this.peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
-        this.socket.emit('signal', {
-          to: this.currentPeer,
+        this.publishToPeer(this.currentPeer, 'signal', {
           from: this.peerId,
           candidate: event.candidate
         });
@@ -119,7 +138,7 @@ class P2PTransferManager {
     // CRITICAL FIX: Set binary type and flow control threshold
     this.dataChannel.binaryType = 'arraybuffer';
     this.dataChannel.bufferedAmountLowThreshold = 256 * 1024; // 256KB threshold
-    
+
     this.dataChannel.onbufferedamountlow = () => {
       this.processSendQueue();
     };
@@ -164,7 +183,7 @@ class P2PTransferManager {
   async scanFolder(folderPath) {
     const files = [];
     const skippedFiles = [];
-    
+
     const walk = (dir) => {
       try {
         const items = fs.readdirSync(dir);
@@ -175,12 +194,12 @@ class P2PTransferManager {
             skippedFiles.push(path.join(dir, item));
             continue;
           }
-          
+
           const fullPath = path.join(dir, item);
-          
+
           try {
             const stats = fs.statSync(fullPath);
-            
+
             if (stats.isDirectory()) {
               walk(fullPath);
             } else {
@@ -206,13 +225,13 @@ class P2PTransferManager {
         console.log('Cannot read directory:', dir);
       }
     };
-    
+
     walk(folderPath);
-    
+
     if (skippedFiles.length > 0) {
       console.log(`Skipped ${skippedFiles.length} files due to permissions or hidden status`);
     }
-    
+
     return files;
   }
 
@@ -242,7 +261,7 @@ class P2PTransferManager {
     const fileHash = await this.generateFileHash(filePath, onProgress
       ? (bytes, total) => onProgress({ phase: 'hashing', bytes, total })
       : null);
-    
+
     const token = {
       version: '1.0',
       type: 'file',
@@ -250,7 +269,6 @@ class P2PTransferManager {
       fileSize: stats.size,
       fileHash: fileHash,
       senderId: this.peerId,
-      signalingServer: this.signalingServerUrl,
       timestamp: Date.now(),
       chunkSize: CHUNK_SIZE
     };
@@ -288,11 +306,11 @@ class P2PTransferManager {
         return null;
       }
     });
-    
+
     const fileMetadata = (await Promise.all(filePromises)).filter(f => f !== null);
-    
+
     const totalSize = fileMetadata.reduce((sum, f) => sum + f.size, 0);
-    
+
     const token = {
       version: '1.0',
       type: 'folder',
@@ -301,7 +319,6 @@ class P2PTransferManager {
       totalFiles: fileMetadata.length,
       files: fileMetadata,
       senderId: this.peerId,
-      signalingServer: this.signalingServerUrl,
       timestamp: Date.now(),
       chunkSize: CHUNK_SIZE
     };
@@ -322,7 +339,7 @@ class P2PTransferManager {
   // Seed either file or folder
   async seed(itemPath, onProgress) {
     const isDir = this.isFolder(itemPath);
-    
+
     if (isDir) {
       const files = await this.scanFolder(itemPath);
       return await this.seedFolder(itemPath, files, onProgress);
@@ -334,10 +351,10 @@ class P2PTransferManager {
   // Original single file seeding
   async seedFile(filePath, onProgress) {
     await this.connectToSignalingServer();
-    
+
     const stats = fs.statSync(filePath);
     const totalChunks = Math.ceil(stats.size / CHUNK_SIZE);
-    
+
     this.transfers.set(this.peerId, {
       type: 'file',
       filePath,
@@ -346,12 +363,8 @@ class P2PTransferManager {
       onProgress
     });
 
-    this.socket.on('peer-requesting', async (data) => {
-      if (data.senderId === this.peerId) {
-        this.currentPeer = data.receiverId;
-        await this.initiateConnection(data.receiverId);
-      }
-    });
+    // Incoming 'request' events from receivers are handled by handleAblyMessage
+    // via the myChannel subscription set up in connectToSignalingServer.
 
     return this.peerId;
   }
@@ -359,7 +372,7 @@ class P2PTransferManager {
   // Multi-file folder seeding
   async seedFolder(folderPath, files, onProgress) {
     await this.connectToSignalingServer();
-    
+
     this.transfers.set(this.peerId, {
       type: 'folder',
       folderPath,
@@ -370,12 +383,8 @@ class P2PTransferManager {
       onProgress
     });
 
-    this.socket.on('peer-requesting', async (data) => {
-      if (data.senderId === this.peerId) {
-        this.currentPeer = data.receiverId;
-        await this.initiateConnection(data.receiverId);
-      }
-    });
+    // Incoming 'request' events from receivers are handled by handleAblyMessage
+    // via the myChannel subscription set up in connectToSignalingServer.
 
     return this.peerId;
   }
@@ -383,37 +392,36 @@ class P2PTransferManager {
   async initiateConnection(receiverId) {
     console.log('Initiating connection to receiver:', receiverId);
     this.createPeerConnection();
-    
+
     this.dataChannel = this.peerConnection.createDataChannel('fileTransfer', {
       ordered: true,
       maxRetransmits: null  // Reliable delivery - no retransmit limit
     });
-    
+
     console.log('Data channel created on sender');
     this.setupDataChannel();
 
     const offer = await this.peerConnection.createOffer();
-    
+
     // CRITICAL FIX: Remove Chrome's 30kbps bandwidth limit
     offer.sdp = offer.sdp.replace('b=AS:30', 'b=AS:1638400');
-    
+
     console.log('SDP bandwidth limit removed');
-    
+
     await this.peerConnection.setLocalDescription(offer);
-    
-    this.socket.emit('signal', {
-      to: receiverId,
+
+    this.publishToPeer(receiverId, 'signal', {
       from: this.peerId,
       sdp: offer
     });
-    
+
     console.log('Offer sent to receiver');
   }
 
   handleDataChannelMessage(data) {
     try {
       const message = JSON.parse(data);
-      
+
       if (message.type === 'request-chunk') {
         this.sendChunk(message.fileIndex, message.chunkIndex);
       } else if (message.type === 'chunk-data') {
@@ -439,7 +447,7 @@ class P2PTransferManager {
         console.log(`Sender: Switching to file ${fileIndex + 1}/${transfer.files.length}`);
         transfer.currentFileIndex = fileIndex;
       }
-      
+
       // Initialize chunk counter for this file if needed
       if (!transfer.sentChunksPerFile.has(fileIndex)) {
         transfer.sentChunksPerFile.set(fileIndex, 0);
@@ -447,7 +455,7 @@ class P2PTransferManager {
     }
 
     let filePath, totalChunks;
-    
+
     if (transfer.type === 'file') {
       filePath = transfer.filePath;
       const stats = fs.statSync(filePath);
@@ -463,7 +471,7 @@ class P2PTransferManager {
     try {
       const offset = chunkIndex * CHUNK_SIZE;
       const buffer = Buffer.alloc(CHUNK_SIZE);
-      
+
       const fd = fs.openSync(filePath, 'r');
       const bytesRead = fs.readSync(fd, buffer, 0, CHUNK_SIZE, offset);
       fs.closeSync(fd);
@@ -494,18 +502,18 @@ class P2PTransferManager {
       } else {
         // Folder progress
         transfer.sentChunksPerFile.set(fileIndex, transfer.sentChunksPerFile.get(fileIndex) + 1);
-        
+
         const fileChunksSent = transfer.sentChunksPerFile.get(fileIndex);
         const fileProgress = Math.round((fileChunksSent / totalChunks) * 100);
-        
+
         // Calculate overall progress
         let totalBytesSent = 0;
         let totalBytes = 0;
-        
+
         for (let i = 0; i < transfer.files.length; i++) {
           const fileSize = transfer.files[i].size;
           totalBytes += fileSize;
-          
+
           if (i < fileIndex) {
             // Files before current are complete
             totalBytesSent += fileSize;
@@ -514,9 +522,9 @@ class P2PTransferManager {
             totalBytesSent += fileChunksSent * CHUNK_SIZE;
           }
         }
-        
+
         const overallProgress = Math.round((totalBytesSent / totalBytes) * 100);
-        
+
         if (transfer.onProgress) {
           transfer.onProgress({
             type: 'folder',
@@ -542,8 +550,7 @@ class P2PTransferManager {
   // Download either file or folder
   async downloadFile(tokenString, savePath, onProgress) {
     const token = this.parseToken(tokenString);
-    
-    this.signalingServerUrl = token.signalingServer;
+    // token.signalingServer is ignored — signaling goes through Ably directly
     await this.connectToSignalingServer();
 
     if (token.type === 'file') {
@@ -594,7 +601,7 @@ class P2PTransferManager {
     }
 
     this.currentPeer = token.senderId;
-    this.socket.emit('request-peer', {
+    this.publishToPeer(token.senderId, 'request', {
       senderId: token.senderId,
       receiverId: this.peerId
     });
@@ -626,7 +633,7 @@ class P2PTransferManager {
     });
 
     this.currentPeer = token.senderId;
-    this.socket.emit('request-peer', {
+    this.publishToPeer(token.senderId, 'request', {
       senderId: token.senderId,
       receiverId: this.peerId
     });
@@ -643,7 +650,7 @@ class P2PTransferManager {
 
     const { fileIndex, chunkIndex, data, hash, totalChunks } = message;
     const chunkBuffer = Buffer.from(data, 'base64');
-    
+
     // Verify chunk hash
     const calculatedHash = crypto.createHash('sha256').update(chunkBuffer).digest('hex');
     if (calculatedHash !== hash) {
@@ -706,10 +713,10 @@ class P2PTransferManager {
       // Check if current file is complete
       if (transfer.receivedFiles[fileIndex].size === fileChunks) {
         console.log(`Receiver: File ${fileIndex + 1}/${transfer.token.files.length} complete: ${file.path}`);
-        
+
         // Write complete file
         this.writeCompletedFile(fileIndex, transfer);
-        
+
         // Move to next file or finalize
         if (fileIndex < transfer.token.files.length - 1) {
           transfer.currentFileIndex = fileIndex + 1;
@@ -728,14 +735,14 @@ class P2PTransferManager {
   writeCompletedFile(fileIndex, transfer) {
     const file = transfer.token.files[fileIndex];
     const fullPath = path.join(transfer.savePath, file.path);
-    
+
     try {
       // Create directories if needed
       const dir = path.dirname(fullPath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      
+
       // Write file
       const fd = fs.openSync(fullPath, 'w');
       const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -746,7 +753,7 @@ class P2PTransferManager {
         }
       }
       fs.closeSync(fd);
-      
+
       console.log('File written:', fullPath);
     } catch (error) {
       console.error('Error writing file:', fullPath, error);
@@ -829,16 +836,16 @@ class P2PTransferManager {
     if (!transfer) return;
 
     console.log('Folder download complete, verifying files...');
-    
+
     // Verify all files
     let allVerified = true;
     for (let i = 0; i < transfer.token.files.length; i++) {
       const file = transfer.token.files[i];
       const fullPath = path.join(transfer.savePath, file.path);
-      
+
       try {
         const fileHash = await this.generateFileHash(fullPath);
-        
+
         if (fileHash !== file.hash) {
           console.error('File hash verification failed:', file.path);
           allVerified = false;
@@ -879,9 +886,8 @@ class P2PTransferManager {
     if (transfer && transfer.onProgress) {
       transfer.onProgress({ error: message });
     }
-    // Only tear down the peer connection — keep the socket alive so the
-    // sender stays registered on the signaling server and can accept a
-    // reconnect attempt from the receiver without needing a new token.
+    // Only tear down the peer connection — keep Ably alive so the sender
+    // stays reachable and can accept a reconnect without a new token.
     this.cleanupPeerConnection();
   }
 
@@ -899,9 +905,10 @@ class P2PTransferManager {
 
   cleanup() {
     this.cleanupPeerConnection();
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
+    if (this.ably) {
+      this.ably.close();
+      this.ably = null;
+      this.myChannel = null;
     }
   }
 }
