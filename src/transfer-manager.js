@@ -58,6 +58,11 @@ class P2PTransferManager {
       }
     } else if (name === 'signal') {
       this.handleSignal(data);
+    } else if (name === 'transfer-complete') {
+      if (this.onTransferComplete && !this._transferConfirmed) {
+        this._transferConfirmed = true;
+        this.onTransferComplete();
+      }
     }
   }
 
@@ -429,7 +434,10 @@ class P2PTransferManager {
       } else if (message.type === 'transfer-start') {
         this.handleTransferStart(message);
       } else if (message.type === 'transfer-complete') {
-        if (this.onTransferComplete) this.onTransferComplete();
+        if (this.onTransferComplete && !this._transferConfirmed) {
+          this._transferConfirmed = true;
+          this.onTransferComplete();
+        }
       }
     } catch (error) {
       console.error('Error handling message:', error);
@@ -806,10 +814,9 @@ class P2PTransferManager {
     const fileHash = await this.generateFileHash(transfer.savePath);
     if (fileHash === transfer.token.fileHash) {
       console.log('File downloaded and verified successfully');
-      // Confirm completion to the sender before tearing down
-      if (this.dataChannel && this.dataChannel.readyState === 'open') {
-        this.dataChannel.send(JSON.stringify({ type: 'transfer-complete' }));
-      }
+      // Confirm completion to the sender via Ably — more reliable than the
+      // data channel, which may have closed during the hash verification wait.
+      this.publishToPeer(senderId, 'transfer-complete', {});
       if (transfer.onProgress) {
         transfer.onProgress({
           received: transfer.totalChunks,
@@ -904,6 +911,7 @@ class P2PTransferManager {
   }
 
   cleanup() {
+    this._transferConfirmed = false;
     this.cleanupPeerConnection();
     if (this.ably) {
       this.ably.close();
