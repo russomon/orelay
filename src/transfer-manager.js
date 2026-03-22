@@ -850,10 +850,14 @@ class P2PTransferManager {
     if (transfer && transfer.onProgress) {
       transfer.onProgress({ error: message });
     }
-    this.cleanup();
+    // Only tear down the peer connection — keep the socket alive so the
+    // sender stays registered on the signaling server and can accept a
+    // reconnect attempt from the receiver without needing a new token.
+    this.cleanupPeerConnection();
   }
 
-  cleanup() {
+  cleanupPeerConnection() {
+    this.sendQueue = [];
     if (this.dataChannel) {
       this.dataChannel.close();
       this.dataChannel = null;
@@ -862,6 +866,10 @@ class P2PTransferManager {
       this.peerConnection.close();
       this.peerConnection = null;
     }
+  }
+
+  cleanup() {
+    this.cleanupPeerConnection();
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
