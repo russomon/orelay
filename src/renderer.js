@@ -369,24 +369,35 @@ async function startDownload() {
     let receiveComplete = false;
 
     await transferManager.downloadFile(tokenString, savePath, (progress) => {
+      console.log('[DIAG renderer] progress callback fired:', JSON.stringify({
+        error: progress.error,
+        resuming: progress.resuming,
+        complete: progress.complete,
+        percentage: progress.percentage,
+        verified: progress.verified
+      }));
       if (progress.error) {
         showReceiveStatus('Error: ' + progress.error, 'error');
       } else if (progress.resuming) {
         updateReceiveProgress(progress);
         showReceiveStatus(`Resuming from ${progress.percentage}% — ${formatFileSize(progress.received * 64 * 1024)} already downloaded`, 'info');
       } else if (progress.complete || (progress.percentage === 100 && progress.verified)) {
+        console.log('[DIAG renderer] taking completion branch — setting receiveComplete=true');
         // Set these flags first, before any DOM work that could throw
         receiveComplete = true;
         if (transferManager) transferManager.onConnectionStateChange = null;
-        try { updateReceiveProgress({ percentage: 100, received: progress.received, total: progress.total }); } catch (e) { console.warn('updateReceiveProgress error:', e); }
+        try { updateReceiveProgress({ percentage: 100, received: progress.received, total: progress.total }); } catch (e) { console.warn('[DIAG renderer] updateReceiveProgress error:', e); }
         showReceiveStatus(`Transfer complete. File saved to "${savePath}"`, 'success');
         showConnectionStatus('Transfer complete', 'connected');
+        console.log('[DIAG renderer] completion branch done');
       } else {
         updateReceiveProgress(progress);
       }
     });
 
+    console.log('[DIAG renderer] downloadFile awaited — assigning onConnectionStateChange');
     transferManager.onConnectionStateChange = (state) => {
+      console.log('[DIAG renderer] onConnectionStateChange fired, state:', state, '| receiveComplete:', receiveComplete);
       if (receiveComplete) return;
       if (state === 'connected') {
         receiveStartTime = Date.now();

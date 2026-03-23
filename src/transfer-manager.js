@@ -694,6 +694,7 @@ class P2PTransferManager {
           this.requestChunk(0, transfer.nextChunkToRequest++);
         }
       } else {
+        console.log('[DIAG] receivedCount reached totalChunks:', totalChunks, '— calling finalizeDownload');
         this.finalizeDownload(this.currentPeer);
       }
     } else {
@@ -805,20 +806,19 @@ class P2PTransferManager {
   }
 
   finalizeDownload(senderId) {
+    console.log('[DIAG] finalizeDownload called, senderId:', senderId);
     const transfer = this.transfers.get(senderId);
+    console.log('[DIAG] transfer found:', !!transfer, '| already finalized:', transfer?.finalized);
     if (!transfer || transfer.finalized) return;
     transfer.finalized = true;
 
     // Guard against a bad fd — don't let it abort the completion signal
-    try { fs.closeSync(transfer.fd); } catch (e) { console.warn('closeSync:', e.message); }
+    try { fs.closeSync(transfer.fd); } catch (e) { console.warn('[DIAG] closeSync threw:', e.message); }
 
-    console.log('File download complete (per-chunk SHA-256 verified throughout)');
-
-    // Notify sender that the receiver is done
+    console.log('[DIAG] about to publishToPeer transfer-complete');
     this.publishToPeer(senderId, 'transfer-complete', {});
 
-    // Wrap in its own try/catch — this call is nested inside handleDataChannelMessage's
-    // try/catch, so any throw here would be silently swallowed, preventing the success UI.
+    console.log('[DIAG] about to call onProgress, onProgress is:', typeof transfer.onProgress);
     if (transfer.onProgress) {
       try {
         transfer.onProgress({
@@ -828,11 +828,15 @@ class P2PTransferManager {
           verified: true,
           complete: true
         });
+        console.log('[DIAG] onProgress returned normally');
       } catch (e) {
-        console.error('[finalizeDownload] onProgress threw — UI may not update:', e);
+        console.error('[DIAG] onProgress threw:', e);
       }
+    } else {
+      console.error('[DIAG] onProgress is missing!');
     }
 
+    console.log('[DIAG] scheduling cleanup in 1s');
     setTimeout(() => this.cleanup(), 1000);
   }
 
