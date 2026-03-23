@@ -688,6 +688,10 @@ class P2PTransferManager {
         });
       }
 
+      const pct = Math.round((transfer.receivedCount / totalChunks) * 100);
+      if (pct >= 99) {
+        console.log(`[DIAG receiveChunk] pct=${pct} receivedCount=${transfer.receivedCount} totalChunks(msg)=${totalChunks} transfer.totalChunks=${transfer.totalChunks} nextReq=${transfer.nextChunkToRequest}`);
+      }
       if (transfer.receivedCount < totalChunks) {
         // Keep the pipeline full — request the next unsent chunk
         if (transfer.nextChunkToRequest < totalChunks) {
