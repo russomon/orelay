@@ -12,12 +12,14 @@ const ICE_SERVERS = [
 ];
 
 class P2PTransferManager {
-  constructor(ablyApiKey, peerId) {
+  constructor(ablyApiKey, peerId, relayUrl) {
     this.ablyApiKey = ablyApiKey;
     this.ably = null;
     this.myChannel = null;
     this.peerConnection = null;
     this.dataChannel = null;
+    this.relayWs = null;
+    this.relayUrl = relayUrl || null;
     this.peerId = peerId || this.generatePeerId();
     this.transfers = new Map();
     this.currentFileIndex = 0;
@@ -120,8 +122,8 @@ class P2PTransferManager {
       console.log('Connection state:', this.peerConnection.connectionState);
       const state = this.peerConnection.connectionState;
       if (state === 'failed') {
-        console.error('Peer connection failed!');
-        this.notifyTransferError('Peer connection failed');
+        console.log('WebRTC failed — attempting relay fallback');
+        this.switchToRelay();
       }
       // 'disconnected' is transient — WebRTC will recover or escalate to 'failed'.
       // Tearing down on 'disconnected' would null onmessage, silently dropping
@@ -546,8 +548,7 @@ class P2PTransferManager {
       }
     } catch (error) {
       console.error('Error sending chunk:', error);
-      // Send error message to receiver
-      this.dataChannel.send(JSON.stringify({
+      this.sendOrQueue(JSON.stringify({
         type: 'error',
         fileIndex: fileIndex,
         message: 'Failed to read file chunk'
@@ -789,7 +790,64 @@ class P2PTransferManager {
     }
   }
 
+  switchToRelay() {
+    if (this.relayWs) return; // already switched or switching
+    if (!this.relayUrl) {
+      console.error('WebRTC failed and no relay URL configured — transfer cannot continue');
+      this.notifyTransferError('Connection failed. No relay server configured.');
+      return;
+    }
+    // Tear down the broken WebRTC connection cleanly before opening relay
+    this.cleanupPeerConnection();
+    const isSender = this.transfers.has(this.peerId);
+    const sessionId = isSender ? this.peerId : this.currentPeer;
+    const role = isSender ? 'sender' : 'receiver';
+    this.connectToRelay(sessionId, role);
+  }
+
+  connectToRelay(sessionId, role) {
+    console.log(`Connecting to relay as ${role}, session ${sessionId.slice(0, 8)}...`);
+    this.relayWs = new WebSocket(this.relayUrl);
+
+    this.relayWs.onopen = () => {
+      this.relayWs.send(JSON.stringify({ type: 'join-relay', sessionId, role }));
+    };
+
+    this.relayWs.onmessage = (event) => {
+      let msg;
+      try { msg = JSON.parse(event.data); } catch (e) { return; }
+
+      if (msg.type === 'relay-ready') {
+        console.log('Relay ready — resuming transfer');
+        if (this.onConnectionStateChange) this.onConnectionStateChange('relaying');
+        // Receiver needs to (re)start requesting chunks
+        if (role === 'receiver' && this.onChannelOpen) this.onChannelOpen();
+      } else if (msg.type === 'relay-peer-disconnected') {
+        this.notifyTransferError('Relay: peer disconnected');
+      } else {
+        this.handleDataChannelMessage(event.data);
+      }
+    };
+
+    this.relayWs.onerror = (err) => {
+      console.error('Relay WebSocket error:', err.message || err);
+      this.notifyTransferError('Could not connect to relay server');
+    };
+
+    this.relayWs.onclose = () => {
+      if (this.relayWs) {
+        console.log('Relay connection closed');
+        this.relayWs = null;
+      }
+    };
+  }
+
   sendOrQueue(message) {
+    // Relay takes priority — send directly (WebSocket handles its own backpressure)
+    if (this.relayWs && this.relayWs.readyState === 1 /* OPEN */) {
+      this.relayWs.send(message);
+      return;
+    }
     if (this.dataChannel.bufferedAmount > SEND_BUFFER_HIGH) {
       this.sendQueue.push(message);
     } else {
@@ -818,11 +876,12 @@ class P2PTransferManager {
   }
 
   requestChunk(fileIndex, chunkIndex) {
-    this.dataChannel.send(JSON.stringify({
-      type: 'request-chunk',
-      fileIndex: fileIndex,
-      chunkIndex: chunkIndex
-    }));
+    const msg = JSON.stringify({ type: 'request-chunk', fileIndex, chunkIndex });
+    if (this.relayWs && this.relayWs.readyState === 1) {
+      this.relayWs.send(msg);
+    } else {
+      this.dataChannel.send(msg);
+    }
   }
 
   finalizeDownload(senderId) {
@@ -938,9 +997,20 @@ class P2PTransferManager {
     }
   }
 
+  cleanupRelay() {
+    if (this.relayWs) {
+      this.relayWs.onmessage = null;
+      this.relayWs.onerror = null;
+      this.relayWs.onclose = null;
+      this.relayWs.close();
+      this.relayWs = null;
+    }
+  }
+
   cleanup() {
     this._transferConfirmed = false;
     this.cleanupPeerConnection();
+    this.cleanupRelay();
     if (this.ably) {
       this.ably.close();
       this.ably = null;

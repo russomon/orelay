@@ -9,12 +9,18 @@
   },
   "dependencies": {
     "ably": "^2.0.0",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
   },
-  "keywords": ["signaling", "webrtc", "p2p", "ably"],
+  "keywords": [
+    "signaling",
+    "webrtc",
+    "p2p",
+    "ably"
+  ],
   "author": "Your Name",
   "license": "MIT"
 }

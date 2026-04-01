@@ -23,6 +23,9 @@ function loadOrCreatePeerId() {
 }
 
 const ABLY_API_KEY = '6H78zw.b03Gpg:c4v-vLqjKwfuv2RSOuN8tkrMxjEDJH8KAAkqJS6dnm8';
+// Relay server URL — update this to your deployed relay server before building.
+// Set to null to disable relay fallback (direct WebRTC only).
+const RELAY_URL = null;
 
 let currentMode = null;
 let selectedItemPath = null;
@@ -133,7 +136,7 @@ async function generateToken() {
       text.textContent = 'Scanning folder...';
     }
 
-    transferManager = new P2PTransferManager(ABLY_API_KEY, loadOrCreatePeerId());
+    transferManager = new P2PTransferManager(ABLY_API_KEY, loadOrCreatePeerId(), RELAY_URL);
     const token = await transferManager.createTransferToken(selectedItemPath, (progress) => {
       if (progress.phase === 'hashing') {
         if (progress.bytes !== undefined) {
@@ -191,6 +194,8 @@ async function startSeeding() {
         document.getElementById('sendTransferStats').style.display = 'block';
       } else if (state === 'disconnected') {
         showSendStatus('Connection unstable — waiting for recovery...', 'warning');
+      } else if (state === 'relaying') {
+        showSendStatus('Direct connection failed — transferring via relay server...', 'info');
       }
     };
 
@@ -319,7 +324,7 @@ async function loadToken() {
       return;
     }
     
-    transferManager = new P2PTransferManager(ABLY_API_KEY);
+    transferManager = new P2PTransferManager(ABLY_API_KEY, null, RELAY_URL);
     tokenData = transferManager.parseToken(tokenString);
     
     if (tokenData.type === 'folder') {
@@ -405,6 +410,9 @@ async function startDownload() {
         }
       } else if (state === 'disconnected') {
         showConnectionStatus('Reconnecting...', 'connecting');
+      } else if (state === 'relaying') {
+        showConnectionStatus('Relaying via server', 'connected');
+        showReceiveStatus('Direct connection failed — downloading via relay server...', 'info');
       }
     };
     
