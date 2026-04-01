@@ -22,9 +22,7 @@ function loadOrCreatePeerId() {
   }
 }
 
-// Load .env from project root
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
-const ABLY_API_KEY = process.env.ABLY_API_KEY || '';
+const ABLY_API_KEY = '6H78zw.b03Gpg:c4v-vLqjKwfuv2RSOuN8tkrMxjEDJH8KAAkqJS6dnm8';
 
 let currentMode = null;
 let selectedItemPath = null;
@@ -363,26 +361,23 @@ async function startDownload() {
     
     document.getElementById('receiveProgress').classList.remove('hidden');
     showConnectionStatus('Connecting to sender...', 'connecting');
-    
+
     const tokenString = document.getElementById('tokenInput').value.trim();
-    
+
     let receiveComplete = false;
 
+    ipcRenderer.send('downloading-started');
+
     await transferManager.downloadFile(tokenString, savePath, (progress) => {
-      console.log('[DIAG renderer] progress callback fired:', JSON.stringify({
-        error: progress.error,
-        resuming: progress.resuming,
-        complete: progress.complete,
-        percentage: progress.percentage,
-        verified: progress.verified
-      }));
       if (progress.error) {
+        ipcRenderer.send('downloading-stopped');
         showReceiveStatus('Error: ' + progress.error, 'error');
       } else if (progress.resuming) {
         updateReceiveProgress(progress);
         showReceiveStatus(`Resuming from ${progress.percentage}% — ${formatFileSize(progress.received * 64 * 1024)} already downloaded`, 'info');
       } else if (progress.complete || (progress.percentage === 100 && progress.verified)) {
         console.log('[DIAG renderer] taking completion branch — setting receiveComplete=true');
+        ipcRenderer.send('downloading-stopped');
         // Set these flags first, before any DOM work that could throw
         receiveComplete = true;
         if (transferManager) transferManager.onConnectionStateChange = null;

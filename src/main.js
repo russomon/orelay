@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -7,6 +7,7 @@ app.commandLine.appendSwitch('log-level', '3');
 
 let mainWindow;
 let seedingWindows = new Map();
+let powerSaveBlockerId = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -206,7 +207,21 @@ ipcMain.handle('select-folder-location', async (event, folderName) => {
   return null;
 });
 
+function startPowerBlocker() {
+  if (powerSaveBlockerId === null) {
+    powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+  }
+}
+
+function stopPowerBlocker() {
+  if (powerSaveBlockerId !== null) {
+    powerSaveBlocker.stop(powerSaveBlockerId);
+    powerSaveBlockerId = null;
+  }
+}
+
 ipcMain.on('seeding-started', (event, peerId) => {
+  startPowerBlocker();
   const window = BrowserWindow.fromWebContents(event.sender);
   if (window) {
     seedingWindows.set(peerId, window);
@@ -234,6 +249,15 @@ ipcMain.on('seeding-started', (event, peerId) => {
 
 ipcMain.on('seeding-stopped', (event, peerId) => {
   seedingWindows.delete(peerId);
+  stopPowerBlocker();
+});
+
+ipcMain.on('downloading-started', () => {
+  startPowerBlocker();
+});
+
+ipcMain.on('downloading-stopped', () => {
+  stopPowerBlocker();
 });
 
 ipcMain.on('show-context-menu', (event) => {

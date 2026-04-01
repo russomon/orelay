@@ -594,6 +594,9 @@ class P2PTransferManager {
       totalChunks,
       receivedCount: resumeChunk,
       nextChunkToRequest: resumeChunk,
+      resumeChunk,
+      receivedChunkIndices: new Set(),
+      retryTimeout: null,
       fd,
       onProgress
     });
@@ -678,7 +681,9 @@ class P2PTransferManager {
         this.cleanup();
         return;
       }
-      transfer.receivedCount++;
+      // Track by index to deduplicate and detect gaps
+      transfer.receivedChunkIndices.add(chunkIndex);
+      transfer.receivedCount = transfer.resumeChunk + transfer.receivedChunkIndices.size;
 
       if (transfer.onProgress) {
         transfer.onProgress({
@@ -688,17 +693,28 @@ class P2PTransferManager {
         });
       }
 
-      const pct = Math.round((transfer.receivedCount / totalChunks) * 100);
-      if (pct >= 99) {
-        console.log(`[DIAG receiveChunk] pct=${pct} receivedCount=${transfer.receivedCount} totalChunks(msg)=${totalChunks} transfer.totalChunks=${transfer.totalChunks} nextReq=${transfer.nextChunkToRequest}`);
-      }
       if (transfer.receivedCount < totalChunks) {
         // Keep the pipeline full — request the next unsent chunk
         if (transfer.nextChunkToRequest < totalChunks) {
           this.requestChunk(0, transfer.nextChunkToRequest++);
+        } else if (!transfer.retryTimeout) {
+          // All chunks requested but some never arrived — retry missing ones after a delay
+          transfer.retryTimeout = setTimeout(() => {
+            transfer.retryTimeout = null;
+            const t = this.transfers.get(this.currentPeer);
+            if (!t || t.finalized) return;
+            for (let i = t.resumeChunk; i < totalChunks; i++) {
+              if (!t.receivedChunkIndices.has(i)) {
+                this.requestChunk(0, i);
+              }
+            }
+          }, 2000);
         }
       } else {
-        console.log('[DIAG] receivedCount reached totalChunks:', totalChunks, '— calling finalizeDownload');
+        if (transfer.retryTimeout) {
+          clearTimeout(transfer.retryTimeout);
+          transfer.retryTimeout = null;
+        }
         this.finalizeDownload(this.currentPeer);
       }
     } else {
