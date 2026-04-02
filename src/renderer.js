@@ -25,7 +25,7 @@ function loadOrCreatePeerId() {
 const ABLY_API_KEY = '6H78zw.b03Gpg:c4v-vLqjKwfuv2RSOuN8tkrMxjEDJH8KAAkqJS6dnm8';
 // Relay server URL — update this to your deployed relay server before building.
 // Set to null to disable relay fallback (direct WebRTC only).
-const RELAY_URL = null;
+const RELAY_URL = 'ws://170.9.59.178:3000';
 
 let currentMode = null;
 let selectedItemPath = null;
