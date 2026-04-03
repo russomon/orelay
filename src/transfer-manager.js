@@ -621,7 +621,7 @@ class P2PTransferManager {
     this.onChannelOpen = () => {
       const transfer = this.transfers.get(token.senderId);
       // Tell sender where we're resuming from so it can sync its progress display
-      this.dataChannel.send(JSON.stringify({
+      this.sendOrQueue(JSON.stringify({
         type: 'transfer-start',
         startChunk: transfer.nextChunkToRequest,
         totalChunks: transfer.totalChunks
